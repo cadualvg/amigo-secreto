@@ -13,6 +13,9 @@ app.get('/', (req, res) => {
 res.send('Servidor do Amigo Secreto rodando 🚀');
 });
 
+const resultadoRoutes = require('./routes/resultadoRoutes');
+app.use('/resultado', resultadoRoutes);
+
 
 const pool = require('./config/db');
 

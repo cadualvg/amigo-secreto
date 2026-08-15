@@ -21,7 +21,7 @@ const pool = require('./config/db');
 
 app.get('/test-db', async (req, res) => {
 try {
-    const [rows] = await pool.query('SELECT 1');
+    const [rows] = await pool.promise().query('SELECT 1');
     res.json({ message: 'Conexão com MySQL OK!', rows });
 } catch (error) {
     console.error(error);

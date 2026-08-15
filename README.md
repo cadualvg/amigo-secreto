@@ -6,6 +6,38 @@ Este projeto foi criado com foco em **boas práticas de backend**, **organizaç�
 
 ---
 
+## 🚀 API no ar
+
+**Base URL:** https://amigo-secreto-production-2d77.up.railway.app
+
+Hospedada na Railway, com MySQL gerenciado. Teste rápido:
+
+```bash
+# 1. Criar um grupo (guarde o codigo e o codigo_organizador da resposta)
+curl -X POST https://amigo-secreto-production-2d77.up.railway.app/grupos/criar \
+  -H "Content-Type: application/json" \
+  -d '{"nome":"Natal 2026","quantidade_maxima_pessoas":2,"valor_presente":50}'
+
+# 2. Entrar no grupo (guarde o codigo_pessoal da resposta)
+curl -X POST https://amigo-secreto-production-2d77.up.railway.app/participantes/entrar \
+  -H "Content-Type: application/json" \
+  -d '{"nome":"Ana","email":"ana@exemplo.com","codigo_grupo":"SEU_CODIGO"}'
+```
+
+### Rotas
+
+| Método | Rota | Descrição |
+|---|---|---|
+| `POST` | `/grupos/criar` | Cria o grupo e gera os códigos |
+| `POST` | `/grupos/travar` | Trava ou destrava *(só organizador)* |
+| `POST` | `/grupos/sortear` | Realiza o sorteio *(só organizador)* |
+| `GET`  | `/grupos/participantes` | Lista participantes *(só organizador)* |
+| `POST` | `/participantes/entrar` | Entra no grupo por código |
+| `DELETE` | `/participantes/remover` | Remove participante *(só organizador)* |
+| `POST` | `/resultado/consultar` | Consulta o próprio resultado |
+
+---
+
 ## Funcionalidades
 
 ### Grupos
@@ -119,16 +151,25 @@ git clone <url-do-repositorio>
 npm install
 ```
 
-### 3. Criar arquivo `.env`
+### 3. Criar o banco e as tabelas
+
+```bash
+mysql -u seu_usuario -p amigo_secreto < database/schema.sql
+```
+
+### 4. Criar arquivo `.env`
+
+Copie `.env.example` para `.env` e preencha:
 
 ```env
 DB_HOST=localhost
+DB_PORT=3306
 DB_USER=seu_usuario
 DB_PASSWORD=sua_senha
-DB_NAME=amigo_secreto
+DB_DATABASE=amigo_secreto
 ```
 
-### 4. Rodar o servidor
+### 5. Rodar o servidor
 
 ```bash
 npm run dev

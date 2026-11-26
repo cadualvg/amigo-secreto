@@ -1,21 +1,9 @@
-const express = require('express');
-const router = express.Router();
+const { Router } = require('express');
+const { entrarNoGrupo, removerParticipante } = require('../controllers/participanteController');
 
-const participanteController = require('../controllers/participanteController');
-const bloquearGrupoTravado = require('../middlewares/bloquearGrupoTravado');
+const router = Router();
 
-//PARTICIPANTES
-// Entrar no grupo (middleware)
-router.post(
-'/entrar',
-bloquearGrupoTravado,
-participanteController.entrarNoGrupo
-);
-
-// Remover participante (sem middleware)
-router.delete(
-'/remover',
-participanteController.removerParticipante
-);
+router.post('/entrar', entrarNoGrupo);
+router.delete('/remover', removerParticipante);
 
 module.exports = router;

@@ -1,76 +1,28 @@
 const db = require('../config/db');
+const ErroHttp = require('../erro-http');
+const { buscarGrupo } = require('../services/grupos');
 
-exports.consultarResultado = (req, res) => {
-    const { codigo_grupo, codigo_pessoal } = req.body;
+exports.consultarResultado = async (req, res) => {
+  const { codigo_grupo, codigo_pessoal } = req.body ?? {};
+  if (typeof codigo_grupo !== 'string' || !codigo_grupo.trim() ||
+      typeof codigo_pessoal !== 'string' || !codigo_pessoal.trim()) {
+    throw new ErroHttp(400, 'Código do grupo e código pessoal são obrigatórios.');
+  }
 
-    if (!codigo_grupo || !codigo_pessoal) {
-        return res.status(400).json({
-            erro: "Código do grupo e código pessoal são obrigatórios."
-        });
-    }
+  const grupo = await buscarGrupo(db, codigo_grupo);
+  if (!grupo.sorteado) throw new ErroHttp(400, 'O sorteio ainda não foi realizado.');
 
-    // Buscar grupo
-    db.query(
-        "SELECT * FROM grupos WHERE codigo = ?",
-        [codigo_grupo],
-        (err, grupos) => {
-            if (err) return res.status(500).json({ erro: "Erro no servidor." });
-            if (grupos.length === 0)
-                return res.status(404).json({ erro: "Grupo não encontrado." });
+  const [[participante]] = await db.execute(
+    'SELECT id, nome FROM participantes WHERE grupo_id = ? AND codigo_pessoal = ?',
+    [grupo.id, codigo_pessoal]
+  );
+  if (!participante) throw new ErroHttp(404, 'Participante não encontrado.');
 
-            const grupo = grupos[0];
+  const [[amigo]] = await db.execute(
+    'SELECT p.nome FROM sorteios s JOIN participantes p ON p.id = s.amigo_sorteado_id WHERE s.grupo_id = ? AND s.participante_id = ?',
+    [grupo.id, participante.id]
+  );
+  if (!amigo) throw new ErroHttp(404, 'Resultado não encontrado.');
 
-            if (!grupo.sorteado) {
-                return res.status(400).json({
-                    erro: "O sorteio ainda não foi realizado."
-                });
-            }
-
-            // Buscar participante
-            db.query(
-                "SELECT * FROM participantes WHERE codigo_pessoal = ? AND grupo_id = ?",
-                [codigo_pessoal, grupo.id],
-                (err2, participantes) => {
-                    if (err2)
-                        return res.status(500).json({ erro: "Erro no servidor." });
-
-                    if (participantes.length === 0) {
-                        return res.status(404).json({
-                            erro: "Participante não encontrado."
-                        });
-                    }
-
-                    const participante = participantes[0];
-
-                    // Buscar sorteio
-                    db.query(
-                        `
-                        SELECT p.nome 
-                        FROM sorteios s
-                        JOIN participantes p 
-                          ON p.id = s.amigo_sorteado_id
-                        WHERE s.participante_id = ?
-                        `,
-                        [participante.id],
-                        (err3, resultado) => {
-                            if (err3)
-                                return res.status(500).json({ erro: "Erro no servidor." });
-
-                            if (resultado.length === 0) {
-                                return res.status(404).json({
-                                    erro: "Resultado não encontrado."
-                                });
-                            }
-
-                            return res.status(200).json({
-                                grupo: grupo.nome,
-                                seu_nome: participante.nome,
-                                amigo_secreto: resultado[0].nome
-                            });
-                        }
-                    );
-                }
-            );
-        }
-    );
+  res.json({ grupo: grupo.nome, seu_nome: participante.nome, amigo_secreto: amigo.nome });
 };

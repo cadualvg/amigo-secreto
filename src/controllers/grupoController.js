@@ -1,212 +1,98 @@
+const { randomBytes } = require('node:crypto');
 const db = require('../config/db');
-const crypto = require('crypto');
+const ErroHttp = require('../erro-http');
+const sortear = require('../domain/sorteio');
+const { comGrupoBloqueado } = require('../services/grupos');
+const { credenciaisOrganizador, exigirOrganizador } = require('../middlewares/validarOrganizador');
 
-
- // CRIAR GRUPO
-
-exports.criarGrupo = (req, res) => {
+exports.criarGrupo = async (req, res) => {
   const {
-    nome,
-    descricao,
-    quantidade_maxima_pessoas,
-    valor_presente,
-    data_evento
-  } = req.body;
+    nome, descricao = null, quantidade_maxima_pessoas, valor_presente = null, data_evento = null
+  } = req.body ?? {};
+  const quantidade = Number(quantidade_maxima_pessoas);
 
-  if (!nome || !quantidade_maxima_pessoas) {
-    return res.status(400).json({
-      erro: "Nome e quantidade máxima são obrigatórios."
-    });
+  if (typeof nome !== 'string' || !nome.trim() || nome.trim().length > 120) {
+    throw new ErroHttp(400, 'Informe um nome para o grupo com até 120 caracteres.');
+  }
+  if (!Number.isInteger(quantidade) || quantidade < 2 || quantidade > 2147483647 || quantidade % 2 !== 0) {
+    throw new ErroHttp(400, 'A quantidade máxima deve ser um número par entre 2 e 2147483646.');
   }
 
-  // Impede número ímpar
-  if (quantidade_maxima_pessoas % 2 !== 0) {
-    return res.status(400).json({
-      erro: "O número máximo de participantes deve ser PAR para permitir o sorteio."
-    });
-  }
+  const codigo = randomBytes(4).toString('hex').toUpperCase();
+  const codigo_organizador = randomBytes(6).toString('hex').toUpperCase();
+  const [resultado] = await db.execute(
+    'INSERT INTO grupos (codigo, codigo_organizador, nome, descricao, quantidade_maxima_pessoas, valor_presente, data_evento) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [codigo, codigo_organizador, nome.trim(), descricao, quantidade, valor_presente, data_evento]
+  );
 
-  const codigo = crypto.randomBytes(3).toString('hex').toUpperCase();
-  const codigo_organizador = crypto.randomBytes(4).toString('hex').toUpperCase();
-
-  const sql = `
-    INSERT INTO grupos
-    (codigo, codigo_organizador, nome, descricao, quantidade_maxima_pessoas, valor_presente, data_evento)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `;
-
-  db.query(
-    sql,
-    [
+  res.status(201).json({
+    mensagem: 'Grupo criado com sucesso!',
+    grupo: {
+      id: resultado.insertId,
       codigo,
       codigo_organizador,
-      nome,
-      descricao,
-      quantidade_maxima_pessoas,
+      nome: nome.trim(),
+      quantidade_maxima_pessoas: quantidade,
       valor_presente,
       data_evento
-    ],
-    (err, result) => {
-      if (err) {
-        console.error(err);
-        return res.status(500).json({ erro: "Erro ao criar grupo." });
-      }
-
-      res.status(201).json({
-        mensagem: "Grupo criado com sucesso!",
-        grupo: {
-          id: result.insertId,
-          codigo,
-          codigo_organizador,
-          nome,
-          quantidade_maxima_pessoas,
-          valor_presente,
-          data_evento
-        }
-      });
     }
+  });
+};
+
+exports.travarGrupo = async (req, res) => {
+  const { codigo, organizador } = credenciaisOrganizador(req);
+  const { travar } = req.body ?? {};
+  if (typeof travar !== 'boolean') {
+    throw new ErroHttp(400, "O campo 'travar' deve ser boolean (true ou false).");
+  }
+
+  await comGrupoBloqueado(codigo, async (conexao, grupo) => {
+    exigirOrganizador(grupo, organizador);
+    if (grupo.sorteado && !travar) {
+      throw new ErroHttp(400, 'Não é possível destravar um grupo que já foi sorteado.');
+    }
+    await conexao.execute('UPDATE grupos SET travado = ? WHERE id = ?', [Number(travar), grupo.id]);
+  });
+
+  res.json({ mensagem: travar ? 'Grupo travado com sucesso.' : 'Grupo destravado com sucesso.' });
+};
+
+exports.sortearGrupo = async (req, res) => {
+  const { codigo, organizador } = credenciaisOrganizador(req);
+
+  const total = await comGrupoBloqueado(codigo, async (conexao, grupo) => {
+    exigirOrganizador(grupo, organizador);
+    const [participantes] = await conexao.execute(
+      'SELECT id FROM participantes WHERE grupo_id = ? ORDER BY id',
+      [grupo.id]
+    );
+    const atribuicoes = sortear(grupo, participantes);
+    const linhas = atribuicoes.map(({ participanteId, amigoId }) => [grupo.id, participanteId, amigoId]);
+
+    await conexao.query(
+      'INSERT INTO sorteios (grupo_id, participante_id, amigo_sorteado_id) VALUES ?',
+      [linhas]
+    );
+    await conexao.execute('UPDATE grupos SET sorteado = 1 WHERE id = ?', [grupo.id]);
+    return atribuicoes.length;
+  });
+
+  res.status(201).json({ mensagem: 'Sorteio realizado com sucesso!', total });
+};
+
+exports.listarParticipantes = async (req, res) => {
+  const grupo = req.grupo;
+  const [participantes] = await db.execute(
+    'SELECT id, nome, email, codigo_pessoal FROM participantes WHERE grupo_id = ? ORDER BY id',
+    [grupo.id]
   );
-};
 
-/**
-TRAVAR / DESTRAVAR GRUPO
-middleware
- */
-exports.travarGrupo = (req, res) => {
-    const { travar } = req.body;
-    const grupo = req.grupo; // vem do middleware
-
-    if (typeof travar !== 'boolean') {
-        return res.status(400).json({
-            erro: "O campo 'travar' deve ser boolean (true ou false)."
-        });
-    }
-
-    // Impede destravar após sorteio
-    if (grupo.sorteado === 1 && travar === false) {
-        return res.status(400).json({
-            erro: "Não é possível destravar um grupo que já foi sorteado."
-        });
-    }
-
-    const novoEstado = travar ? 1 : 0;
-
-    db.query(
-        "UPDATE grupos SET travado = ? WHERE id = ?",
-        [novoEstado, grupo.id],
-        (err) => {
-            if (err) {
-                return res.status(500).json({
-                    erro: "Erro ao atualizar grupo."
-                });
-            }
-
-            return res.status(200).json({
-                mensagem: travar
-                    ? "Grupo travado com sucesso."
-                    : "Grupo destravado com sucesso."
-            });
-        }
-    );
-};
-
-/**
- * SORTEAR GRUPO
- */
-exports.sortearGrupo = (req, res) => {
-    const grupo = req.grupo; // vem do middleware (validado)
-
-    // Grupo precisa estar travado
-    if (!grupo.travado) {
-        return res.status(400).json({
-            erro: "O grupo precisa estar travado antes do sorteio."
-        });
-    }
-
-    // Buscar participantes
-    db.query(
-        "SELECT * FROM participantes WHERE grupo_id = ?",
-        [grupo.id],
-        (err, participantes) => {
-            if (err) {
-                return res.status(500).json({
-                    erro: "Erro ao buscar participantes."
-                });
-            }
-
-            const total = participantes.length;
-
-            if (total !== grupo.quantidade_maxima_pessoas) {
-                return res.status(400).json({
-                    erro: "O grupo não possui participantes suficientes."
-                });
-            }
-
-            // Embaralhar
-            const embaralhados = [...participantes].sort(
-                () => Math.random() - 0.5
-            );
-
-            // Evitar auto-sorteio
-            for (let i = 0; i < participantes.length; i++) {
-                if (participantes[i].id === embaralhados[i].id) {
-                    return exports.sortearGrupo(req, res);
-                }
-            }
-
-            const inserts = participantes.map((p, i) => [
-                grupo.id,
-                p.id,
-                embaralhados[i].id
-            ]);
-
-            db.query(
-                "INSERT INTO sorteios (grupo_id, participante_id, amigo_sorteado_id) VALUES ?",
-                [inserts],
-                (err2) => {
-                    if (err2) {
-                        return res.status(500).json({
-                            erro: "Erro ao salvar sorteio."
-                        });
-                    }
-
-                    db.query(
-                        "UPDATE grupos SET sorteado = 1 WHERE id = ?",
-                        [grupo.id]
-                    );
-
-                    return res.status(201).json({
-                        mensagem: "Sorteio realizado com sucesso!",
-                        total
-                    });
-                }
-            );
-        }
-    );
-};
-
-
-
- // LISTAR PARTICIPANTES
-
-exports.listarParticipantes = (req, res) => {
-    const grupo = req.grupo; // vem do middleware
-
-    db.query(
-        "SELECT id, nome, email, codigo_pessoal FROM participantes WHERE grupo_id = ?",
-        [grupo.id],
-        (err, participantes) => {
-            if (err) {
-                return res.status(500).json({
-                    erro: "Erro ao buscar participantes."
-                });
-            }
-
-            return res.status(200).json({
-                grupo: grupo.nome,
-                total: participantes.length,
-                participantes
-            });
-        }
-    );
+  res.json({
+    grupo: grupo.nome,
+    total: participantes.length,
+    quantidade_maxima_pessoas: grupo.quantidade_maxima_pessoas,
+    travado: Boolean(grupo.travado),
+    sorteado: Boolean(grupo.sorteado),
+    participantes
+  });
 };

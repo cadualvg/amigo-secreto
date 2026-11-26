@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f2eb">
+  <meta name="description" content="Crie um grupo, entre com um código e consulte seu sorteio. Uma demonstração da API REST do Amigo Secreto.">
+  <title>Amigo Secreto</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main>
+    <header class="intro">
+      <div>
+        <h1>Amigo Secreto</h1>
+        <p>Crie um grupo, convide os participantes e faça o sorteio quando o grupo estiver completo.</p>
+      </div>
+      <div class="project">
+        <span>API REST · Node.js · MySQL</span>
+        <a href="https://github.com/cadualvg/amigo-secreto">Ver API e testes ↗</a>
+      </div>
+    </header>
+
+    <nav aria-label="Escolher função" class="switch">
+      <button type="button" aria-controls="organizador" aria-pressed="true">Organizador</button>
+      <button type="button" aria-controls="participante" aria-pressed="false">Participante</button>
+    </nav>
+
+    <section id="organizador" class="area" aria-label="Organizador">
+      <form id="criar" class="card">
+        <h2>Criar grupo</h2>
+        <label>Nome do grupo
+          <input name="nome" required maxlength="120" placeholder="Ex. Natal da turma">
+        </label>
+        <label for="quantidade">Quantidade de participantes</label>
+        <input id="quantidade" name="quantidade_maxima_pessoas" type="number" min="2" max="2147483646" step="2" value="2" required aria-describedby="quantidade-ajuda">
+        <small id="quantidade-ajuda">Escolha um número par.</small>
+        <button class="primary" type="submit">Criar grupo</button>
+        <p class="status" role="status"></p>
+      </form>
+
+      <form id="carregar" class="card">
+        <h2>Abrir grupo existente</h2>
+        <label>Código do grupo
+          <input name="codigo_grupo" required maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false">
+        </label>
+        <label>Código do organizador
+          <input name="codigo_organizador" type="password" required maxlength="12" autocomplete="off">
+        </label>
+        <button type="submit">Carregar grupo</button>
+        <p class="status" role="status"></p>
+      </form>
+
+      <section id="painel" class="card group" aria-labelledby="grupo-nome" hidden>
+        <div class="group-header">
+          <div>
+            <h2 id="grupo-nome">Grupo</h2>
+            <p id="grupo-estado"></p>
+          </div>
+          <div class="credentials">
+            <p>Código para convidar <code id="grupo-codigo"></code></p>
+            <p id="organizador-novo" hidden>Código do organizador <code id="organizador-codigo"></code></p>
+          </div>
+        </div>
+        <ul id="grupo-pessoas" class="people" aria-label="Participantes"></ul>
+        <fieldset id="comandos" class="controls">
+          <legend>Ações do grupo</legend>
+          <button id="travar" type="button">Travar grupo</button>
+          <button id="sortear" class="primary" type="button">Sortear</button>
+          <button id="atualizar" type="button">Atualizar lista</button>
+        </fieldset>
+        <p id="regra" class="hint"></p>
+        <p id="acao-status" class="status" role="status"></p>
+      </section>
+    </section>
+
+    <section id="participante" class="area" aria-label="Participante" hidden>
+      <form id="entrar" class="card">
+        <h2>Entrar no grupo</h2>
+        <label>Código do grupo
+          <input name="codigo_grupo" required maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false">
+        </label>
+        <label>Seu nome
+          <input name="nome" required maxlength="120" autocomplete="given-name">
+        </label>
+        <label>E-mail <span class="optional">(opcional)</span>
+          <input name="email" type="email" maxlength="160" autocomplete="email">
+        </label>
+        <button class="primary" type="submit">Entrar no grupo</button>
+        <p id="pessoal-novo" class="code-output" hidden>Guarde seu código pessoal <code id="pessoal-codigo"></code></p>
+        <p class="status" role="status"></p>
+      </form>
+
+      <form id="consultar" class="card">
+        <h2>Consultar meu resultado</h2>
+        <label>Código do grupo
+          <input name="codigo_grupo" required maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false">
+        </label>
+        <label>Código pessoal
+          <input name="codigo_pessoal" required maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false">
+        </label>
+        <button type="submit">Consultar sorteio</button>
+        <p class="status" role="status"></p>
+      </form>
+    </section>
+
+    <footer>Para experimentar, use dois nomes fictícios.</footer>
+    <noscript><p>Ative o JavaScript para usar a interface.</p></noscript>
+  </main>
+</body>
+</html>

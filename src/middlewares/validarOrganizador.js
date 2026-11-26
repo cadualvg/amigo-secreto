@@ -1,42 +1,34 @@
+const { timingSafeEqual } = require('node:crypto');
 const db = require('../config/db');
+const ErroHttp = require('../erro-http');
+const { buscarGrupo } = require('../services/grupos');
 
-module.exports = (req, res, next) => {
-    const codigo_grupo =
-        req.body?.codigo_grupo || req.query?.codigo_grupo;
+function credenciaisOrganizador(req) {
+  const codigo = req.body?.codigo_grupo || req.query?.codigo_grupo;
+  const organizador = req.body?.codigo_organizador ||
+    req.get('X-Codigo-Organizador') || req.query?.codigo_organizador;
 
-    const codigo_organizador =
-        req.body?.codigo_organizador || req.query?.codigo_organizador;
+  if (typeof codigo !== 'string' || !codigo.trim() ||
+      typeof organizador !== 'string' || !organizador.trim()) {
+    throw new ErroHttp(400, 'Código do grupo e código do organizador são obrigatórios.');
+  }
+  return { codigo, organizador };
+}
 
-    if (!codigo_grupo || !codigo_organizador) {
-        return res.status(400).json({
-            erro: "Código do grupo e código do organizador são obrigatórios."
-        });
-    }
+function exigirOrganizador(grupo, organizador) {
+  const esperado = Buffer.from(grupo.codigo_organizador);
+  const recebido = Buffer.from(organizador);
+  if (esperado.length !== recebido.length || !timingSafeEqual(esperado, recebido)) {
+    throw new ErroHttp(403, 'Código do organizador inválido.');
+  }
+}
 
-    db.query(
-        "SELECT * FROM grupos WHERE codigo = ?",
-        [codigo_grupo],
-        (err, results) => {
-            if (err) {
-                return res.status(500).json({ erro: "Erro no servidor." });
-            }
+async function validarOrganizador(req, res, next) {
+  const { codigo, organizador } = credenciaisOrganizador(req);
+  const grupo = await buscarGrupo(db, codigo);
+  exigirOrganizador(grupo, organizador);
+  req.grupo = grupo;
+  next();
+}
 
-            if (results.length === 0) {
-                return res.status(404).json({ erro: "Grupo não encontrado." });
-            }
-
-            const grupo = results[0];
-
-            if (grupo.codigo_organizador !== codigo_organizador) {
-                return res.status(403).json({
-                    erro: "Código do organizador inválido."
-                });
-            }
-
-            // Disponibiliza o grupo para o controller
-            req.grupo = grupo;
-
-            next();
-        }
-    );
-};
+module.exports = { credenciaisOrganizador, exigirOrganizador, validarOrganizador };

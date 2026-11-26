@@ -1,166 +1,74 @@
-const db = require('../config/db');
-const crypto = require('crypto');
+const { randomBytes } = require('node:crypto');
+const ErroHttp = require('../erro-http');
+const { comGrupoBloqueado } = require('../services/grupos');
+const { credenciaisOrganizador, exigirOrganizador } = require('../middlewares/validarOrganizador');
 
-exports.entrarNoGrupo = (req, res) => {
-  const { nome, email, codigo_grupo } = req.body;
+exports.entrarNoGrupo = async (req, res) => {
+  const { nome, email = null, codigo_grupo } = req.body ?? {};
 
-  if (!nome || !codigo_grupo) {
-    return res.status(400).json({ erro: "Nome e código do grupo são obrigatórios." });
+  if (typeof nome !== 'string' || !nome.trim() || nome.trim().length > 120 ||
+      typeof codigo_grupo !== 'string' || !codigo_grupo.trim()) {
+    throw new ErroHttp(400, 'Informe o código do grupo e um nome com até 120 caracteres.');
+  }
+  if (email !== null && (typeof email !== 'string' || email.trim().length > 160)) {
+    throw new ErroHttp(400, 'Informe um e-mail com até 160 caracteres.');
   }
 
-  // Verifica se o grupo existe
-  db.query(
-    "SELECT * FROM grupos WHERE codigo = ?",
-    [codigo_grupo],
-    (err, results) => {
-      if (err) return res.status(500).json({ erro: "Erro no servidor." });
-
-      if (results.length === 0) {
-        return res.status(404).json({ erro: "Grupo não encontrado." });
-      }
-
-      const grupo = results[0];
-
-      // Impede entrada em grupo travado
-if (grupo.travado === 1) {
-  return res.status(400).json({
-    erro: "O grupo está travado e não aceita novos participantes."
-  });
-}
-
-      // Verifica se o participante já existe no grupo (email duplicado)
-      db.query(
-        "SELECT id FROM participantes WHERE email = ? AND grupo_id = ?",
-        [email, grupo.id],
-        (err2, rows) => {
-          if (err2) return res.status(500).json({ erro: "Erro ao verificar duplicidade." });
-
-          if (rows.length > 0) {
-            return res.status(400).json({ erro: "Este e-mail já está cadastrado neste grupo." });
-          }
-
-          // Verifica a quantidade de participantes
-          db.query(
-            "SELECT COUNT(*) AS total FROM participantes WHERE grupo_id = ?",
-            [grupo.id],
-            (err3, totalRows) => {
-              if (err3)
-                return res.status(500).json({ erro: "Erro ao contar participantes." });
-
-              const total = totalRows[0].total;
-
-              if (total >= grupo.quantidade_maxima_pessoas) {
-                return res.status(400).json({
-                  erro: "O grupo já atingiu o número máximo de participantes."
-                });
-              }
-
-              // Cria código pessoal do participante
-              const codigo_pessoal = crypto.randomBytes(3).toString("hex").toUpperCase();
-
-              // Insere participante no grupo
-              const sql = `
-                INSERT INTO participantes (grupo_id, nome, email, codigo_pessoal)
-                VALUES (?, ?, ?, ?)
-              `;
-
-              db.query(
-                sql,
-                [grupo.id, nome, email, codigo_pessoal],
-                (err4, result4) => {
-                  if (err4) {
-                    console.log(err4);
-                    return res.status(500).json({
-                      erro: "Erro ao adicionar participante."
-                    });
-                  }
-
-                  return res.status(201).json({
-                    mensagem: "Participante adicionado com sucesso!",
-                    participante: {
-                      id: result4.insertId,
-                      nome,
-                      codigo_pessoal,
-                      grupo: grupo.nome
-                    }
-                  });
-                }
-              );
-            }
-          );
-        }
-      );
+  const emailNormalizado = email?.trim() || null;
+  const participante = await comGrupoBloqueado(codigo_grupo, async (conexao, grupo) => {
+    if (grupo.travado || grupo.sorteado) {
+      throw new ErroHttp(403, 'O grupo está travado e não aceita novos participantes.');
     }
-  );
+
+    if (emailNormalizado) {
+      const [[duplicado]] = await conexao.execute(
+        'SELECT id FROM participantes WHERE grupo_id = ? AND email = ?',
+        [grupo.id, emailNormalizado]
+      );
+      if (duplicado) throw new ErroHttp(400, 'Este e-mail já está cadastrado neste grupo.');
+    }
+
+    const [[{ total }]] = await conexao.execute(
+      'SELECT COUNT(*) AS total FROM participantes WHERE grupo_id = ?',
+      [grupo.id]
+    );
+    if (total >= grupo.quantidade_maxima_pessoas) {
+      throw new ErroHttp(400, 'O grupo já atingiu o número máximo de participantes.');
+    }
+
+    const codigo_pessoal = randomBytes(6).toString('hex').toUpperCase();
+    const [resultado] = await conexao.execute(
+      'INSERT INTO participantes (grupo_id, nome, email, codigo_pessoal) VALUES (?, ?, ?, ?)',
+      [grupo.id, nome.trim(), emailNormalizado, codigo_pessoal]
+    );
+
+    return { id: resultado.insertId, nome: nome.trim(), codigo_pessoal, grupo: grupo.nome };
+  });
+
+  res.status(201).json({ mensagem: 'Participante adicionado com sucesso!', participante });
 };
 
-// REMOVER PARTICIPANTE DO GRUPO (antes de travar)
-exports.removerParticipante = (req, res) => {
-  const { codigo_grupo, codigo_organizador, codigo_pessoal } = req.body;
-
-  if (!codigo_grupo || !codigo_organizador || !codigo_pessoal) {
-    return res.status(400).json({
-      erro: "Código do grupo, código do organizador e código pessoal são obrigatórios."
-    });
+exports.removerParticipante = async (req, res) => {
+  const { codigo, organizador } = credenciaisOrganizador(req);
+  const { codigo_pessoal } = req.body ?? {};
+  if (typeof codigo_pessoal !== 'string' || !codigo_pessoal.trim()) {
+    throw new ErroHttp(400, 'O código pessoal é obrigatório.');
   }
 
-  // Busca grupo
-  db.query(
-    "SELECT * FROM grupos WHERE codigo = ?",
-    [codigo_grupo],
-    (err, rows) => {
-      if (err) return res.status(500).json({ erro: "Erro no servidor." });
-      if (rows.length === 0) return res.status(404).json({ erro: "Grupo não encontrado." });
-
-      const grupo = rows[0];
-
-      // valida organizador
-      if (grupo.codigo_organizador !== codigo_organizador) {
-        return res.status(403).json({ erro: "Código do organizador incorreto." });
-      }
-
-      // impede remoção após travar
-      if (grupo.travado === 1) {
-        return res.status(400).json({ erro: "O grupo está travado e não permite remoção de participantes." });
-      }
-
-      // impede remoção após sorteio
-      if (grupo.sorteado === 1) {
-        return res.status(400).json({ erro: "Não é possível remover participantes após o sorteio." });
-      }
-
-      // verifica se participante existe
-      db.query(
-        "SELECT * FROM participantes WHERE codigo_pessoal = ? AND grupo_id = ?",
-        [codigo_pessoal, grupo.id],
-        (err2, participantes) => {
-          if (err2) return res.status(500).json({ erro: "Erro ao buscar participante." });
-
-          if (participantes.length === 0) {
-            return res.status(404).json({ erro: "Participante não encontrado neste grupo." });
-          }
-
-          const participante = participantes[0];
-
-          // deletar
-          db.query(
-            "DELETE FROM participantes WHERE id = ?",
-            [participante.id],
-            (err3) => {
-              if (err3) return res.status(500).json({ erro: "Erro ao remover participante." });
-
-              return res.status(200).json({
-                mensagem: "Participante removido com sucesso.",
-                removido: {
-                  id: participante.id,
-                  nome: participante.nome,
-                  codigo_pessoal: participante.codigo_pessoal
-                }
-              });
-            }
-          );
-        }
-      );
+  const removido = await comGrupoBloqueado(codigo, async (conexao, grupo) => {
+    exigirOrganizador(grupo, organizador);
+    if (grupo.travado || grupo.sorteado) {
+      throw new ErroHttp(400, 'O grupo está travado e não permite remoção de participantes.');
     }
-  );
+
+    const [[participante]] = await conexao.execute(
+      'SELECT id, nome, codigo_pessoal FROM participantes WHERE grupo_id = ? AND codigo_pessoal = ?',
+      [grupo.id, codigo_pessoal]
+    );
+    if (!participante) throw new ErroHttp(404, 'Participante não encontrado neste grupo.');
+    await conexao.execute('DELETE FROM participantes WHERE id = ?', [participante.id]);
+    return participante;
+  });
+
+  res.json({ mensagem: 'Participante removido com sucesso.', removido });
 };
